@@ -14,6 +14,7 @@ from db.crud import get_verse_with_all, list_verses
 from api.schemas import (
     CommentaryOut, InsightOut, SearchResult, VerseDetailOut, VerseOut
 )
+from analysis.qa import find_relevant_commentaries, ask_acharya
 
 
 @asynccontextmanager
@@ -176,6 +177,70 @@ async def search(
         ))
 
     return results
+
+
+# ── Q&A ───────────────────────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class QuestionRequest(BaseModel):
+    question: str
+
+class AcharyaAnswer(BaseModel):
+    acharya: str
+    name: str
+    answer: str
+    source_verses: list[str]
+
+class QAResponse(BaseModel):
+    question: str
+    answers: list[AcharyaAnswer]
+
+
+@app.post("/ask", response_model=QAResponse, tags=["Q&A"])
+async def ask(
+    req: QuestionRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Ask a question and receive answers in the voice of each acharya,
+    grounded in their actual Bhagavad-gita commentaries.
+    """
+    from analysis.qa import ACHARYA_PERSONAS
+    import asyncio
+
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    ACHARYAS = ["prabhupada", "vishvanatha", "baladeva"]
+
+    # Fetch relevant excerpts — each acharya gets its own session to avoid concurrency conflict
+    from db.session import AsyncSessionLocal
+    async def fetch(acharya):
+        async with AsyncSessionLocal() as s:
+            return await find_relevant_commentaries(question, acharya, s)
+
+    excerpt_lists = await asyncio.gather(*[fetch(a) for a in ACHARYAS])
+
+    # Call Claude for each acharya (run in thread pool to avoid blocking)
+    answers = []
+    for acharya, excerpts in zip(ACHARYAS, excerpt_lists):
+        try:
+            answer_text = await asyncio.get_event_loop().run_in_executor(
+                None, ask_acharya, question, acharya, excerpts
+            )
+        except Exception as e:
+            answer_text = f"(Could not generate response: {e})"
+
+        answers.append(AcharyaAnswer(
+            acharya=acharya,
+            name=ACHARYA_PERSONAS[acharya]["name"],
+            answer=answer_text,
+            source_verses=[e["verse"] for e in excerpts],
+        ))
+
+    return QAResponse(question=question, answers=answers)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

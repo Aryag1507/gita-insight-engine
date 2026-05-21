@@ -9,8 +9,14 @@ import anthropic
 
 from .prompts import SYSTEM_PROMPT, build_analysis_prompt
 
-MODEL = "claude-sonnet-4-5"
-MAX_TOKENS = 2048
+# Haiku is ~4x cheaper than Sonnet and plenty capable for structured extraction.
+# Cost estimate: ~$0.08 per chapter vs ~$0.45 with Sonnet.
+MODEL = "claude-haiku-4-5"
+MAX_TOKENS = 1024
+
+# Max characters per commentary sent to Claude.
+# Prabhupada purports average 3k chars — most insight is in the first ~1500.
+COMMENTARY_MAX_CHARS = 1500
 
 # Load .env manually (no extra dep needed)
 def _load_env() -> None:
@@ -61,9 +67,15 @@ def analyze_verse(
     if len(commentaries) < 2:
         return None
 
+    # Truncate long commentaries to reduce token cost
+    trimmed = [
+        {**c, "text": c["text"][:COMMENTARY_MAX_CHARS] + ("…" if len(c["text"]) > COMMENTARY_MAX_CHARS else "")}
+        for c in commentaries
+    ]
+
     client = _get_client()
     prompt = build_analysis_prompt(
-        chapter, verse_label, sanskrit, translation, commentaries
+        chapter, verse_label, sanskrit, translation, trimmed
     )
 
     message = client.messages.create(
