@@ -47,50 +47,59 @@ def _extract_commentary(soup: BeautifulSoup, heading_text: str) -> Optional[str]
     return "\n\n".join(paragraphs) if paragraphs else None
 
 
-async def fetch_all_verse_urls(client: httpx.AsyncClient) -> list[str]:
-    """Fetch the full TOC and return all verse doc URLs in order."""
+async def fetch_chapter_verse_urls(
+    client: httpx.AsyncClient, chapter: int
+) -> list[tuple[str, str]]:
+    """Return (absolute_url, verse_label) for all verse pages in a chapter.
+
+    Filters by link text (e.g. 'Verse 1.3', 'Verses 1.4-6') so we only
+    fetch the pages we actually need — no scanning all 678 docs.
+    """
     resp = await fetch(client, TOC_URL)
     soup = BeautifulSoup(resp.text, "lxml")
+
+    results: list[tuple[str, str]] = []
     seen: set[str] = set()
-    urls = []
+    pattern = re.compile(rf"Verses?\s+{chapter}\.(\d[\d\-]*)", re.IGNORECASE)
+
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "/shrimad-bhagavad-gita/d/doc" in href and href not in seen:
-            seen.add(href)
-            urls.append(BASE_URL + href if href.startswith("/") else href)
-    return urls
+        if "/shrimad-bhagavad-gita/d/doc" not in href:
+            continue
+        link_text = a.get_text(strip=True)
+        m = pattern.match(link_text)
+        if not m or href in seen:
+            continue
+        seen.add(href)
+        verse_label = m.group(1)
+        url = BASE_URL + href if href.startswith("/") else href
+        results.append((url, verse_label))
+
+    return results
 
 
 async def scrape_chapter(
     client: httpx.AsyncClient,
     chapter: int,
-    all_urls: list[str],
     on_verse=None,
 ) -> list[WisdomlibVerse]:
-    results = []
-    for url in all_urls:
+    verse_urls = await fetch_chapter_verse_urls(client, chapter)
+    results: list[WisdomlibVerse] = []
+
+    for url, verse_label in verse_urls:
         try:
             resp = await fetch(client, url)
         except Exception as e:
-            print(f"  [wisdomlib] Failed {url}: {e}")
+            print(f"  [wisdomlib] Failed BG {chapter}.{verse_label}: {e}")
             continue
 
         soup = BeautifulSoup(resp.text, "lxml")
-        h1 = soup.find("h1")
-        if not h1:
-            continue
-
-        title = h1.get_text(strip=True)
-        ch, verse_label = _parse_chapter_verse(title)
-        if ch != chapter:
-            continue
-
         vishvanatha = _extract_commentary(soup, "Sārārtha-Varṣiṇī Ṭīkā")
         if not vishvanatha:
-            continue  # skip intro/dedication pages
+            continue
 
         verse = WisdomlibVerse(
-            chapter=ch,
+            chapter=chapter,
             verse_label=verse_label,
             source_url=url,
             vishvanatha=vishvanatha,
@@ -107,14 +116,9 @@ async def scrape_chapters(
 ) -> list[WisdomlibVerse]:
     all_verses: list[WisdomlibVerse] = []
     async with make_client() as client:
-        print("Fetching Wisdomlib TOC...")
-        all_urls = await fetch_all_verse_urls(client)
-        print(f"  → {len(all_urls)} total doc URLs")
-
         for chapter in chapters:
             print(f"Scraping Wisdomlib Chapter {chapter}...")
-            verses = await scrape_chapter(client, chapter, all_urls, on_verse=on_verse)
+            verses = await scrape_chapter(client, chapter, on_verse=on_verse)
             all_verses.extend(verses)
             print(f"  → {len(verses)} verses with Vishvanatha commentary")
-
     return all_verses
