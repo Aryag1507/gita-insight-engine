@@ -23,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/" className="hover:text-stone-800 transition-colors">Home</Link>
               <Link href="/chapter/1" className="hover:text-stone-800 transition-colors">Browse</Link>
               <Link href="/ask" className="hover:text-stone-800 transition-colors font-medium text-amber-700">Ask</Link>
+              <Link href="/debate" className="hover:text-stone-800 transition-colors font-medium text-amber-700">Debate</Link>
             </nav>
           </div>
         </header>

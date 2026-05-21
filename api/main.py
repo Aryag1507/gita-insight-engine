@@ -206,6 +206,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
+    acharyas: list[str] = []   # if non-empty, only these acharyas respond
 
 class ChatTurn(BaseModel):
     acharya: str
@@ -216,6 +217,88 @@ class ChatTurn(BaseModel):
 class ChatResponse(BaseModel):
     message: str
     replies: list[ChatTurn]
+
+
+# ── Debate models ─────────────────────────────────────────────────────────────
+
+class DebateMessage(BaseModel):
+    role: str      # "prabhupada" | "vishvanatha" | "baladeva" | "user" | "topic"
+    content: str
+
+class DebateRequest(BaseModel):
+    topic: str
+    history: list[DebateMessage] = []
+    turns: int = 3                      # how many new turns to generate
+    user_interjection: str = ""         # optional student question mid-debate
+
+class DebateTurn(BaseModel):
+    speaker: str
+    name: str
+    content: str
+    source_verses: list[str]
+
+class DebateResponse(BaseModel):
+    topic: str
+    turns: list[DebateTurn]
+
+
+@app.post("/debate", response_model=DebateResponse, tags=["Q&A"])
+async def debate(req: DebateRequest):
+    """
+    Run one or more turns of an inter-acharya philosophical debate.
+    Pass the full history on each request; the API returns the next N turns.
+    Optionally inject a student question via user_interjection.
+    """
+    from analysis.debate import generate_debate_turn, next_speaker, DEBATE_ORDER
+    from db.session import AsyncSessionLocal
+    import asyncio
+
+    topic = req.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Debate topic cannot be empty.")
+
+    history = [m.model_dump() for m in req.history]
+
+    # Determine the first speaker: whoever follows the last acharya in history
+    last_speaker = next(
+        (m["role"] for m in reversed(history) if m["role"] in DEBATE_ORDER),
+        DEBATE_ORDER[-1],   # if no acharya has spoken yet, start with first
+    )
+
+    new_turns: list[DebateTurn] = []
+    interjection = req.user_interjection.strip() or None
+
+    for i in range(req.turns):
+        speaker = next_speaker(last_speaker)
+
+        # Fetch relevant excerpts for this speaker
+        async with AsyncSessionLocal() as s:
+            excerpts = await find_relevant_commentaries(topic, speaker, s)
+
+        # Pass interjection only on the first new turn
+        reply_text = await asyncio.get_event_loop().run_in_executor(
+            None,
+            generate_debate_turn,
+            speaker,
+            topic,
+            history,
+            excerpts,
+            interjection if i == 0 else None,
+        )
+
+        turn = DebateTurn(
+            speaker=speaker,
+            name=ACHARYA_PERSONAS[speaker]["name"],
+            content=reply_text,
+            source_verses=[e["verse"] for e in excerpts],
+        )
+        new_turns.append(turn)
+
+        # Append to history so each subsequent speaker can "hear" the previous one
+        history.append({"role": speaker, "content": reply_text})
+        last_speaker = speaker
+
+    return DebateResponse(topic=topic, turns=new_turns)
 
 
 @app.post("/ask", response_model=QAResponse, tags=["Q&A"])
@@ -279,7 +362,8 @@ async def chat(
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    ACHARYAS = ["prabhupada", "vishvanatha", "baladeva"]
+    ALL_ACHARYAS = ["prabhupada", "vishvanatha", "baladeva"]
+    ACHARYAS = [a for a in ALL_ACHARYAS if a in req.acharyas] if req.acharyas else ALL_ACHARYAS
     all_acharya_names = {k: v["name"] for k, v in ACHARYA_PERSONAS.items()}
     history = [m.model_dump() for m in req.history]
 
