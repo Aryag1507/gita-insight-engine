@@ -14,7 +14,7 @@ from db.crud import get_verse_with_all, list_verses
 from api.schemas import (
     CommentaryOut, InsightOut, SearchResult, VerseDetailOut, VerseOut
 )
-from analysis.qa import find_relevant_commentaries, ask_acharya
+from analysis.qa import find_relevant_commentaries, ask_acharya, chat_as_acharya, ACHARYA_PERSONAS
 
 
 @asynccontextmanager
@@ -32,9 +32,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten in production
-    allow_methods=["GET"],
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
 
 
@@ -196,6 +197,26 @@ class QAResponse(BaseModel):
     question: str
     answers: list[AcharyaAnswer]
 
+# ── Chat models ───────────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str          # "user" | "prabhupada" | "vishvanatha" | "baladeva"
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[ChatMessage] = []
+
+class ChatTurn(BaseModel):
+    acharya: str
+    name: str
+    reply: str
+    source_verses: list[str]
+
+class ChatResponse(BaseModel):
+    message: str
+    replies: list[ChatTurn]
+
 
 @app.post("/ask", response_model=QAResponse, tags=["Q&A"])
 async def ask(
@@ -241,6 +262,54 @@ async def ask(
         ))
 
     return QAResponse(question=question, answers=answers)
+
+
+@app.post("/chat", response_model=ChatResponse, tags=["Q&A"])
+async def chat(
+    req: ChatRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Multi-turn panel conversation with all three acharyas.
+    Pass the full history of the conversation on each request.
+    """
+    import asyncio
+
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    ACHARYAS = ["prabhupada", "vishvanatha", "baladeva"]
+    all_acharya_names = {k: v["name"] for k, v in ACHARYA_PERSONAS.items()}
+    history = [m.model_dump() for m in req.history]
+
+    # Fetch relevant excerpts concurrently (each gets its own session)
+    from db.session import AsyncSessionLocal
+    async def fetch(acharya):
+        async with AsyncSessionLocal() as s:
+            return await find_relevant_commentaries(message, acharya, s)
+
+    excerpt_lists = await asyncio.gather(*[fetch(a) for a in ACHARYAS])
+
+    # Call Claude for each acharya with conversation history
+    replies = []
+    # Run sequentially so each acharya can "hear" the previous replies in follow-up turns
+    for acharya, excerpts in zip(ACHARYAS, excerpt_lists):
+        try:
+            reply_text = await asyncio.get_event_loop().run_in_executor(
+                None, chat_as_acharya, message, acharya, excerpts, history, all_acharya_names
+            )
+        except Exception as e:
+            reply_text = f"(Could not generate response: {e})"
+
+        replies.append(ChatTurn(
+            acharya=acharya,
+            name=ACHARYA_PERSONAS[acharya]["name"],
+            reply=reply_text,
+            source_verses=[e["verse"] for e in excerpts],
+        ))
+
+    return ChatResponse(message=message, replies=replies)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

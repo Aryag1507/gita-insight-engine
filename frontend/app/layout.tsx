@@ -6,7 +6,7 @@ import "./globals.css";
 const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Gita Insight Engine",
+  title: "gita.ai",
   description: "Multi-acharya Bhagavad-gita commentary aggregator with AI synthesis",
 };
 
@@ -16,9 +16,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geist.className} bg-stone-50 text-stone-900 min-h-screen`}>
         <header className="border-b border-stone-200 bg-white sticky top-0 z-10">
           <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2 font-semibold text-lg text-stone-800 hover:text-amber-700 transition-colors">
-              <span className="text-2xl">🕉</span>
-              <span>Gita Insight Engine</span>
+            <Link href="/" className="font-bold text-xl text-stone-800 hover:text-amber-700 transition-colors tracking-tight">
+              gita<span className="text-amber-600">.ai</span>
             </Link>
             <nav className="flex gap-6 text-sm text-stone-500">
               <Link href="/" className="hover:text-stone-800 transition-colors">Home</Link>

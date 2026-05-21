@@ -69,6 +69,88 @@ teachings. If the excerpts don't directly address the question, say so honestly 
 share what you CAN offer from your teachings on related topics.\
 """
 
+CHAT_SYSTEM_PROMPT = """\
+You are participating in a live philosophical discussion panel about the Bhagavad-gita. \
+You are a specific Vaishnava acharya responding to a student's question. \
+Other acharyas are also present and have given their answers before you — you may \
+briefly acknowledge or gently respond to their perspectives if relevant, but always \
+stay grounded in your own philosophical tradition. \
+Keep responses concise (3-6 sentences). Speak in first person as the acharya.\
+"""
+
+CHAT_PROMPT = """\
+You are {name}.
+
+{style}
+
+Here is the conversation so far:
+{history}
+
+The student's latest message: "{message}"
+
+Relevant excerpts from your Bhagavad-gita commentaries:
+{excerpts}
+
+Respond naturally as {short_name}, continuing the conversation. You may reference \
+what other acharyas have said if it enriches your answer, but always speak from \
+your own philosophical position.\
+"""
+
+
+def build_chat_history_text(history: list[dict], acharya_names: dict) -> str:
+    """Format conversation history into readable text for the prompt."""
+    if not history:
+        return "(This is the beginning of the conversation.)"
+    lines = []
+    for msg in history[-8:]:  # last 8 turns to stay within token budget
+        role = msg["role"]
+        content = msg["content"]
+        if role == "user":
+            lines.append(f"Student: {content}")
+        else:
+            name = acharya_names.get(role, role.title())
+            lines.append(f"{name}: {content}")
+    return "\n".join(lines)
+
+
+def chat_as_acharya(
+    message: str,
+    acharya: str,
+    excerpts: list[dict],
+    history: list[dict],
+    all_acharya_names: dict,
+) -> str:
+    """Generate a conversational reply as the given acharya with full history."""
+    persona = ACHARYA_PERSONAS.get(acharya)
+    if not persona:
+        raise ValueError(f"Unknown acharya: {acharya}")
+
+    excerpt_text = (
+        "(No direct commentary found — respond from your general philosophical position.)"
+        if not excerpts
+        else "\n\n".join(f"[{e['verse']}]\n{e['text']}" for e in excerpts)
+    )
+
+    history_text = build_chat_history_text(history, all_acharya_names)
+
+    prompt = CHAT_PROMPT.format(
+        name=persona["name"],
+        short_name=persona["name"].split()[0],
+        style=persona["style"],
+        history=history_text,
+        message=message,
+        excerpts=excerpt_text,
+    )
+
+    client = _get_client()
+    message_obj = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=512,
+        system=CHAT_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message_obj.content[0].text
+
 
 async def find_relevant_commentaries(
     question: str,
