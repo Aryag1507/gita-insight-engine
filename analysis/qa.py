@@ -120,10 +120,28 @@ def chat_as_acharya(
     history: list[dict],
     all_acharya_names: dict,
 ) -> str:
-    """Generate a conversational reply as the given acharya with full history."""
+    """Generate a conversational reply as the given acharya with full history.
+
+    If the local fine-tuned model (gita-lm) is enabled and supports this acharya,
+    the reply is served locally with no API call. Any failure falls back to Claude.
+    """
     persona = ACHARYA_PERSONAS.get(acharya)
     if not persona:
         raise ValueError(f"Unknown acharya: {acharya}")
+
+    # Route to the local fine-tuned model when available, else fall through to Claude.
+    from . import local_model
+    if local_model.supports(acharya):
+        try:
+            return local_model.chat_as_acharya_local(
+                message=message,
+                acharya=acharya,
+                excerpts=excerpts,
+                history=history,
+            )
+        except Exception as e:
+            import sys
+            print(f"[local_model] falling back to Claude: {e}", file=sys.stderr)
 
     excerpt_text = (
         "(No direct commentary found — respond from your general philosophical position.)"
