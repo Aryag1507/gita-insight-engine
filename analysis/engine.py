@@ -9,10 +9,8 @@ import anthropic
 
 from .prompts import SYSTEM_PROMPT, build_analysis_prompt
 
-# Haiku is ~4x cheaper than Sonnet and plenty capable for structured extraction.
-# Cost estimate: ~$0.08 per chapter vs ~$0.45 with Sonnet.
-MODEL = "claude-haiku-4-5"
-MAX_TOKENS = 1024
+MODEL = "claude-sonnet-4-5"
+MAX_TOKENS = 2048
 
 # Max characters per commentary sent to Claude.
 # Prabhupada purports average 3k chars — most insight is in the first ~1500.

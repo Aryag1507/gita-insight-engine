@@ -120,11 +120,18 @@ def generate_debate_turn(
         injected_note=injected,
     )
 
+    import time
     client = _get_client()
-    msg = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=400,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return msg.content[0].text
+    for attempt in range(4):
+        try:
+            msg = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=400,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return msg.content[0].text
+        except Exception as e:
+            if attempt == 3 or "overloaded" not in str(e).lower():
+                raise
+            time.sleep(8 * (attempt + 1))

@@ -142,14 +142,21 @@ def chat_as_acharya(
         excerpts=excerpt_text,
     )
 
+    import time
     client = _get_client()
-    message_obj = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=512,
-        system=CHAT_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message_obj.content[0].text
+    for attempt in range(4):
+        try:
+            message_obj = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=512,
+                system=CHAT_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return message_obj.content[0].text
+        except Exception as e:
+            if attempt == 3 or "overloaded" not in str(e).lower():
+                raise
+            time.sleep(8 * (attempt + 1))
 
 
 async def find_relevant_commentaries(
